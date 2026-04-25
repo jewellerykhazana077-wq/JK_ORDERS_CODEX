@@ -1,8 +1,9 @@
 import { NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
+import type { WithId } from "mongodb";
 import { usersCollection } from "@/lib/collections";
 import { createSessionToken } from "@/lib/auth";
-import type { SessionUser } from "@/lib/types";
+import type { SessionUser, UserDocument } from "@/lib/types";
 
 async function readLoginBody(request: Request) {
   const contentType = request.headers.get("content-type") ?? "";
@@ -39,6 +40,40 @@ function loginRedirect(request: Request, path: string) {
   return NextResponse.redirect(new URL(path, request.url), { status: 303 });
 }
 
+async function bootstrapAdmin(username: string, password: string): Promise<WithId<UserDocument> | null> {
+  const adminUsername = String(process.env.ADMIN_USERNAME ?? "admin").trim().toLowerCase();
+  const adminPassword = String(process.env.ADMIN_PASSWORD ?? "");
+  const adminEmail = String(process.env.ADMIN_EMAIL ?? "").trim().toLowerCase();
+
+  if (!adminUsername || !adminPassword || username !== adminUsername || password !== adminPassword) {
+    return null;
+  }
+
+  const users = await usersCollection();
+  const now = new Date();
+  const update: Record<string, unknown> = {
+    name: adminUsername,
+    username: adminUsername,
+    passwordHash: await bcrypt.hash(adminPassword, 12),
+    role: "admin",
+    active: true,
+    updatedAt: now
+  };
+
+  if (adminEmail) update.email = adminEmail;
+
+  const result = await users.findOneAndUpdate(
+    { username: adminUsername },
+    {
+      $set: update,
+      $setOnInsert: { createdAt: now }
+    },
+    { upsert: true, returnDocument: "after" }
+  );
+
+  return result;
+}
+
 export async function POST(request: Request) {
   try {
     const { username, password, isForm } = await readLoginBody(request);
@@ -49,10 +84,14 @@ export async function POST(request: Request) {
     }
 
     const users = await usersCollection();
-    const user = await users.findOne({
+    let user = await users.findOne({
       active: true,
       $or: [{ username }, { email: username }]
     });
+
+    if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
+      user = await bootstrapAdmin(username, password);
+    }
 
     if (!user || !(await bcrypt.compare(password, user.passwordHash))) {
       if (isForm) return loginRedirect(request, "/login?error=invalid");
