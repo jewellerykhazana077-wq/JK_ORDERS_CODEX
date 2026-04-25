@@ -194,3 +194,27 @@ export async function PATCH(request: Request) {
 
   return NextResponse.json({ ok: true });
 }
+
+export async function DELETE(request: Request) {
+  const user = await getSessionUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  if (user.role !== "admin") {
+    return NextResponse.json({ error: "Only admin can delete orders." }, { status: 403 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const id = cleanText(body?.id);
+  if (!ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Valid order id is required." }, { status: 400 });
+  }
+
+  const orders = await ordersCollection();
+  const result = await orders.deleteOne({ _id: new ObjectId(id) });
+  if (!result.deletedCount) {
+    return NextResponse.json({ error: "Order not found." }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true });
+}

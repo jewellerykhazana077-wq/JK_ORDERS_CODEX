@@ -200,6 +200,30 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
     await updateStatus(row, item, status, "");
   }
 
+  async function deleteOrder(row: OrderRow) {
+    if (user.role !== "admin") return;
+    const confirmed = window.confirm(`Delete order ${row.orderNumber}? This cannot be undone.`);
+    if (!confirmed) return;
+
+    setMessage("");
+    const response = await fetch("/api/orders", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: row._id })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessageType("error");
+      setMessage(data.error ?? "Could not delete order.");
+      return;
+    }
+
+    setMessageType("success");
+    setMessage(`Order ${row.orderNumber} deleted.`);
+    await loadOrders();
+    await loadMonthly();
+  }
+
   function updateProduct(index: number, product: ProductItem) {
     setForm({
       ...form,
@@ -347,6 +371,7 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                     <th>Payment</th>
                     <th>Remark</th>
                     <th>Employee</th>
+                    {user.role === "admin" ? <th>Action</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -390,10 +415,15 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                         <span className="remark-text" title={row.employeeRemark || ""}>{row.employeeRemark || "-"}</span>
                       </td>
                       <td>{row.createdByName}</td>
+                      {user.role === "admin" ? (
+                        <td>
+                          <button className="mini-button danger-button" type="button" onClick={() => deleteOrder(row)}>Delete</button>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
                   {!filteredRows.length && !loading ? (
-                    <tr><td colSpan={7}>No orders recorded for this date.</td></tr>
+                    <tr><td colSpan={user.role === "admin" ? 8 : 7}>No orders recorded for this date.</td></tr>
                   ) : null}
                 </tbody>
               </table>
@@ -434,6 +464,7 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                     <th>Status</th>
                     <th>Payment</th>
                     <th>Products</th>
+                    {user.role === "admin" ? <th>Action</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -444,9 +475,14 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                       <td><span className="status-badge">{STATUS_LABELS[row.status]}</span></td>
                       <td>{row.paymentType ?? "-"}</td>
                       <td>{row.lineItems?.length ?? 1}</td>
+                      {user.role === "admin" ? (
+                        <td>
+                          <button className="mini-button danger-button" type="button" onClick={() => deleteOrder(row)}>Delete</button>
+                        </td>
+                      ) : null}
                     </tr>
                   ))}
-                  {!filteredMonthlyRows.length ? <tr><td colSpan={5}>No orders in this filter.</td></tr> : null}
+                  {!filteredMonthlyRows.length ? <tr><td colSpan={user.role === "admin" ? 6 : 5}>No orders in this filter.</td></tr> : null}
                 </tbody>
               </table>
             </div>
