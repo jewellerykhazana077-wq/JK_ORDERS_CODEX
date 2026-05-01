@@ -30,6 +30,12 @@ type OrderRow = {
 
 type Totals = Record<OrderStatus, number> & { total: number };
 type MonthlyTotals = Totals & { payments: { Prepaid: number; COD: number } };
+type OrderForm = {
+  orderDate: string;
+  orderNumber: string;
+  paymentType: "Prepaid" | "COD";
+  products: ProductItem[];
+};
 
 const ITEM_STATUS_OPTIONS = ITEM_STATUSES.map((status) => ({
   value: status,
@@ -70,12 +76,14 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
   const [monthlyLoading, setMonthlyLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error">("success");
-  const [form, setForm] = useState({
+  const [editingOrderId, setEditingOrderId] = useState<string | null>(null);
+  const [form, setForm] = useState<OrderForm>({
     orderDate: today(),
     orderNumber: "",
     paymentType: "Prepaid" as "Prepaid" | "COD",
     products: [{ productImageUrl: "", status: "Unprocessed" as ItemStatus, awbNumber: "" }]
   });
+  const canEditSavedOrders = user.role === "admin" || Boolean(user.canEditOrders);
 
   const summaryCards = useMemo(
     () => [
@@ -144,18 +152,19 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
     event.preventDefault();
     setMessage("");
     const response = await fetch("/api/orders", {
-      method: "POST",
+      method: editingOrderId ? "PUT" : "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(form)
+      body: JSON.stringify(editingOrderId ? { ...form, id: editingOrderId } : form)
     });
     const data = await response.json();
     if (!response.ok) {
       setMessageType("error");
-      setMessage(data.error ?? "Could not save order.");
+      setMessage(data.error ?? (editingOrderId ? "Could not update order." : "Could not save order."));
       return;
     }
     setMessageType("success");
-    setMessage("Order saved.");
+    setMessage(editingOrderId ? "Order updated." : "Order saved.");
+    setEditingOrderId(null);
     setForm({
       ...form,
       orderNumber: "",
@@ -243,6 +252,35 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
     setForm({ ...form, products: form.products.filter((_, itemIndex) => itemIndex !== index) });
   }
 
+  function startEditOrder(row: OrderRow) {
+    if (!canEditSavedOrders) return;
+    setMessage("");
+    setEditingOrderId(row._id);
+    setForm({
+      orderDate: row.orderDate,
+      orderNumber: row.orderNumber,
+      paymentType: row.paymentType ?? "Prepaid",
+      products: (row.lineItems?.length ? row.lineItems : [{ productImageUrl: row.productImageUrl, status: row.status as ItemStatus, awbNumber: row.awbNumber }]).map((item) => ({
+        id: item.id,
+        productImageUrl: item.productImageUrl,
+        status: item.status,
+        awbNumber: item.awbNumber ?? ""
+      }))
+    });
+    setDate(row.orderDate);
+    setMonth(row.orderDate.slice(0, 7));
+  }
+
+  function cancelEditOrder() {
+    setEditingOrderId(null);
+    setForm({
+      orderDate: today(),
+      orderNumber: "",
+      paymentType: "Prepaid",
+      products: [{ productImageUrl: "", status: "Unprocessed", awbNumber: "" }]
+    });
+  }
+
   function exportUrl() {
     window.location.href = `/api/orders/export?date=${date}`;
   }
@@ -279,7 +317,7 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
 
         <section className="workspace-grid">
           <form className="panel" onSubmit={submit}>
-            <h2>Record order</h2>
+            <h2>{editingOrderId ? "Edit order" : "Record order"}</h2>
             <label>
               Order date
               <input type="date" value={form.orderDate} onChange={(event) => setForm({ ...form, orderDate: event.target.value })} required />
@@ -351,7 +389,10 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
               </label>
             </fieldset>
             {message ? <p className={messageType === "error" ? "error" : "notice"}>{message}</p> : null}
-            <button className="primary">Save order</button>
+            <div className="form-actions">
+              {editingOrderId ? <button className="ghost" type="button" onClick={cancelEditOrder}>Cancel edit</button> : null}
+              <button className="primary">{editingOrderId ? "Update order" : "Save order"}</button>
+            </div>
           </form>
 
           <section className="panel table-panel">
@@ -371,7 +412,7 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                     <th>Payment</th>
                     <th>Remark</th>
                     <th>Employee</th>
-                    {user.role === "admin" ? <th>Action</th> : null}
+                    {user.role === "admin" || canEditSavedOrders ? <th>Action</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -415,15 +456,18 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                         <span className="remark-text" title={row.employeeRemark || ""}>{row.employeeRemark || "-"}</span>
                       </td>
                       <td>{row.createdByName}</td>
-                      {user.role === "admin" ? (
+                      {user.role === "admin" || canEditSavedOrders ? (
                         <td>
-                          <button className="mini-button danger-button" type="button" onClick={() => deleteOrder(row)}>Delete</button>
+                          <div className="row-actions">
+                            {canEditSavedOrders ? <button className="mini-button" type="button" onClick={() => startEditOrder(row)}>Edit</button> : null}
+                            {user.role === "admin" ? <button className="mini-button danger-button" type="button" onClick={() => deleteOrder(row)}>Delete</button> : null}
+                          </div>
                         </td>
                       ) : null}
                     </tr>
                   ))}
                   {!filteredRows.length && !loading ? (
-                    <tr><td colSpan={user.role === "admin" ? 8 : 7}>No orders recorded for this date.</td></tr>
+                    <tr><td colSpan={user.role === "admin" || canEditSavedOrders ? 8 : 7}>No orders recorded for this date.</td></tr>
                   ) : null}
                 </tbody>
               </table>
@@ -464,7 +508,7 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                     <th>Status</th>
                     <th>Payment</th>
                     <th>Products</th>
-                    {user.role === "admin" ? <th>Action</th> : null}
+                    {user.role === "admin" || canEditSavedOrders ? <th>Action</th> : null}
                   </tr>
                 </thead>
                 <tbody>
@@ -475,14 +519,17 @@ export default function OrderWorkspace({ user }: { user: SessionUser }) {
                       <td><span className="status-badge">{STATUS_LABELS[row.status]}</span></td>
                       <td>{row.paymentType ?? "-"}</td>
                       <td>{row.lineItems?.length ?? 1}</td>
-                      {user.role === "admin" ? (
+                      {user.role === "admin" || canEditSavedOrders ? (
                         <td>
-                          <button className="mini-button danger-button" type="button" onClick={() => deleteOrder(row)}>Delete</button>
+                          <div className="row-actions">
+                            {canEditSavedOrders ? <button className="mini-button" type="button" onClick={() => startEditOrder(row)}>Edit</button> : null}
+                            {user.role === "admin" ? <button className="mini-button danger-button" type="button" onClick={() => deleteOrder(row)}>Delete</button> : null}
+                          </div>
                         </td>
                       ) : null}
                     </tr>
                   ))}
-                  {!filteredMonthlyRows.length ? <tr><td colSpan={user.role === "admin" ? 6 : 5}>No orders in this filter.</td></tr> : null}
+                  {!filteredMonthlyRows.length ? <tr><td colSpan={user.role === "admin" || canEditSavedOrders ? 6 : 5}>No orders in this filter.</td></tr> : null}
                 </tbody>
               </table>
             </div>

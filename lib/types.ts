@@ -11,6 +11,7 @@ export interface UserDocument {
   passwordHash: string;
   role: UserRole;
   active: boolean;
+  canEditOrders?: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -45,4 +46,5 @@ export interface SessionUser {
   username: string;
   email?: string;
   role: UserRole;
+  canEditOrders?: boolean;
 }

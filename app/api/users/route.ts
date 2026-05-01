@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
+import { ObjectId } from "mongodb";
 import bcrypt from "bcryptjs";
 import { requireUser } from "@/lib/auth";
 import { usersCollection } from "@/lib/collections";
 
 function isDuplicateKeyError(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === 11000;
+}
+
+function cleanText(value: unknown) {
+  return String(value ?? "").trim();
 }
 
 export async function GET() {
@@ -47,6 +52,7 @@ export async function POST(request: Request) {
       passwordHash: await bcrypt.hash(password, 12),
       role,
       active: true,
+      canEditOrders: role === "admin",
       createdAt: now,
       updatedAt: now
     });
@@ -57,4 +63,38 @@ export async function POST(request: Request) {
     }
     throw error;
   }
+}
+
+export async function PATCH(request: Request) {
+  const admin = await requireUser("admin");
+  if (!admin) {
+    return NextResponse.json({ error: "Admin login required." }, { status: 403 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const id = cleanText(body?.id);
+  if (!ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Valid user id is required." }, { status: 400 });
+  }
+
+  const users = await usersCollection();
+  const target = await users.findOne({ _id: new ObjectId(id) });
+  if (!target) {
+    return NextResponse.json({ error: "User not found." }, { status: 404 });
+  }
+  if (target.role === "admin") {
+    return NextResponse.json({ error: "Admins already have order edit access." }, { status: 400 });
+  }
+
+  await users.updateOne(
+    { _id: new ObjectId(id) },
+    {
+      $set: {
+        canEditOrders: Boolean(body?.canEditOrders),
+        updatedAt: new Date()
+      }
+    }
+  );
+
+  return NextResponse.json({ ok: true });
 }

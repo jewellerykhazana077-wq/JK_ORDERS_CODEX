@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getSessionUser } from "@/lib/auth";
-import { ordersCollection } from "@/lib/collections";
+import { ordersCollection, usersCollection } from "@/lib/collections";
 import { isItemStatus, needsAwb, normalizeDateInput, ORDER_STATUSES, type ItemStatus } from "@/lib/status";
 import { buildRemark, calculateOrderStatus, normalizeLineItems, orderRemark } from "@/lib/orderItems";
 import type { OrderDocument, OrderLineItem } from "@/lib/types";
@@ -18,16 +18,17 @@ function isDuplicateKeyError(error: unknown) {
   return typeof error === "object" && error !== null && "code" in error && error.code === 11000;
 }
 
-function cleanProducts(value: unknown): OrderLineItem[] {
+function cleanProducts(value: unknown, keepIds = false): OrderLineItem[] {
   const rawProducts = Array.isArray(value) ? value : [];
   return rawProducts
     .map((item) => {
+      const id = cleanText((item as Record<string, unknown>)?.id);
       const productImageUrl = cleanText((item as Record<string, unknown>)?.productImageUrl);
       const status = cleanText((item as Record<string, unknown>)?.status);
       const awbNumber = cleanText((item as Record<string, unknown>)?.awbNumber);
       if (!productImageUrl || !isItemStatus(status)) return null;
       return {
-        id: new ObjectId().toHexString(),
+        id: keepIds && id ? id : new ObjectId().toHexString(),
         productImageUrl,
         status,
         awbNumber: status === "Dispatched" ? awbNumber : "",
@@ -35,6 +36,19 @@ function cleanProducts(value: unknown): OrderLineItem[] {
       };
     })
     .filter((item): item is OrderLineItem => Boolean(item));
+}
+
+async function canEditOrders(user: Awaited<ReturnType<typeof getSessionUser>>) {
+  if (!user) return false;
+  if (user.role === "admin") return true;
+  if (!ObjectId.isValid(user.id)) return false;
+
+  const users = await usersCollection();
+  const freshUser = await users.findOne(
+    { _id: new ObjectId(user.id), active: true },
+    { projection: { canEditOrders: 1 } }
+  );
+  return Boolean(freshUser?.canEditOrders);
 }
 
 function toResponseRow(row: OrderDocument) {
@@ -191,6 +205,61 @@ export async function PATCH(request: Request) {
       }
     }
   );
+
+  return NextResponse.json({ ok: true });
+}
+
+export async function PUT(request: Request) {
+  const user = await getSessionUser();
+  if (!(await canEditOrders(user))) {
+    return NextResponse.json({ error: "Order edit access required." }, { status: 403 });
+  }
+
+  const body = await request.json().catch(() => null);
+  const id = cleanText(body?.id);
+  const orderDate = normalizeDateInput(cleanText(body?.orderDate));
+  const orderNumber = cleanText(body?.orderNumber);
+  const paymentType = cleanPaymentType(body?.paymentType);
+  const lineItems = cleanProducts(body?.products, true);
+
+  if (!ObjectId.isValid(id)) {
+    return NextResponse.json({ error: "Valid order id is required." }, { status: 400 });
+  }
+  if (!orderNumber || !lineItems.length) {
+    return NextResponse.json({ error: "Order number and at least one product are required." }, { status: 400 });
+  }
+  if (lineItems.some((item) => needsAwb(item.status) && !item.awbNumber)) {
+    return NextResponse.json({ error: "AWB number is required when status is Dispatched." }, { status: 400 });
+  }
+
+  const status = calculateOrderStatus(lineItems);
+  const orders = await ordersCollection();
+  try {
+    const result = await orders.updateOne(
+      { _id: new ObjectId(id) },
+      {
+        $set: {
+          orderDate,
+          orderNumber,
+          productImageUrl: lineItems[0].productImageUrl,
+          lineItems,
+          paymentType,
+          status,
+          awbNumber: lineItems.map((item) => item.awbNumber).filter(Boolean).join(", "),
+          employeeRemark: orderRemark(lineItems),
+          updatedAt: new Date()
+        }
+      }
+    );
+    if (!result.matchedCount) {
+      return NextResponse.json({ error: "Order not found." }, { status: 404 });
+    }
+  } catch (error) {
+    if (isDuplicateKeyError(error)) {
+      return NextResponse.json({ error: "This order number is already recorded for the selected date." }, { status: 409 });
+    }
+    throw error;
+  }
 
   return NextResponse.json({ ok: true });
 }

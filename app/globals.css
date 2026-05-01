@@ -321,7 +321,8 @@ button.stat {
 .panel > fieldset,
 .panel > button,
 .panel > .notice,
-.panel > .error {
+.panel > .error,
+.panel > .form-actions {
   margin-left: 22px;
   margin-right: 22px;
 }
@@ -345,6 +346,7 @@ form.panel > fieldset,
 form.panel > .product-editor,
 form.panel > .notice,
 form.panel > .error,
+form.panel > .form-actions,
 form.panel > button {
   margin-left: 22px;
   margin-right: 22px;
@@ -353,6 +355,21 @@ form.panel > button {
 
 form.panel > button.primary {
   width: calc(100% - 44px);
+}
+
+.form-actions,
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.form-actions .primary {
+  flex: 1;
+}
+
+.row-actions {
+  flex-wrap: wrap;
 }
 
 .table-panel {

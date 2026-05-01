@@ -103,7 +103,8 @@ export async function POST(request: Request) {
       name: user.name ?? user.username ?? user.email ?? "User",
       username: user.username ?? user.email ?? user.name,
       email: user.email,
-      role: user.role
+      role: user.role,
+      canEditOrders: user.role === "admin" || Boolean(user.canEditOrders)
     };
 
     if (isForm) return withSessionCookie(loginRedirect(request, "/dashboard"), sessionUser);

@@ -10,6 +10,7 @@ type UserRow = {
   username: string;
   role: UserRole;
   active: boolean;
+  canEditOrders?: boolean;
 };
 
 export default function AdminUsers({ user }: { user: SessionUser }) {
@@ -21,6 +22,22 @@ export default function AdminUsers({ user }: { user: SessionUser }) {
     const response = await fetch("/api/users");
     const data = await response.json();
     if (response.ok) setUsers(data.rows);
+  }
+
+  async function toggleEditAccess(row: UserRow) {
+    setMessage("");
+    const response = await fetch("/api/users", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: row._id, canEditOrders: !row.canEditOrders })
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      setMessage(data.error ?? "Could not update edit access.");
+      return;
+    }
+    setMessage(!row.canEditOrders ? "Edit access assigned." : "Edit access removed.");
+    await loadUsers();
   }
 
   useEffect(() => {
@@ -80,7 +97,9 @@ export default function AdminUsers({ user }: { user: SessionUser }) {
                     <th>Name</th>
                     <th>User ID</th>
                     <th>Role</th>
+                    <th>Order edit access</th>
                     <th>Status</th>
+                    <th>Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -89,7 +108,15 @@ export default function AdminUsers({ user }: { user: SessionUser }) {
                       <td>{row.name}</td>
                       <td>{row.username}</td>
                       <td>{row.role}</td>
+                      <td>{row.role === "admin" || row.canEditOrders ? "Allowed" : "Not allowed"}</td>
                       <td>{row.active ? "Active" : "Disabled"}</td>
+                      <td>
+                        {row.role === "employee" ? (
+                          <button className="mini-button" type="button" onClick={() => toggleEditAccess(row)}>
+                            {row.canEditOrders ? "Remove edit" : "Allow edit"}
+                          </button>
+                        ) : "-"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
